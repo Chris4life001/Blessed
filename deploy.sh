@@ -33,10 +33,10 @@ echo "▶ Step 2/5 — Installing dependencies..."
 pnpm install --frozen-lockfile
 
 echo ""
-echo "▶ Step 3/5 — Pushing database schema..."
-cd lib/db
-DATABASE_URL="$DATABASE_URL" pnpm run push-force
-cd ../..
+echo "▶ Step 3/5 — Database schema..."
+echo "   NOTE: Schema changes must be applied manually via migrations before deploying."
+echo "   Run 'pnpm run push-force' only in dev/staging — never blindly in production."
+echo "   To apply pending changes: cd lib/db && DATABASE_URL=\$DATABASE_URL pnpm run push-force"
 
 echo ""
 echo "▶ Step 4/5 — Building API server..."

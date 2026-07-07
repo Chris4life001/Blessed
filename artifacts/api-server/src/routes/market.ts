@@ -62,14 +62,23 @@ async function fetchCryptoPrices(): Promise<Record<string, number>> {
     { signal: AbortSignal.timeout(5000) },
   );
   if (!res.ok) throw new Error(`CoinGecko HTTP ${res.status}`);
-  const json = await res.json() as Record<string, { usd: number }>;
-  return {
-    "BTC/USD":  json.bitcoin?.usd,
-    "ETH/USD":  json.ethereum?.usd,
-    "SOL/USD":  json.solana?.usd,
-    "XRP/USD":  json.ripple?.usd,
-    "DOGE/USD": json.dogecoin?.usd,
-  };
+  const json = await res.json() as Record<string, { usd?: number }>;
+
+  const prices: Record<string, number> = {};
+  const mapping: [string, string][] = [
+    ["BTC/USD", "bitcoin"],
+    ["ETH/USD", "ethereum"],
+    ["SOL/USD", "solana"],
+    ["XRP/USD", "ripple"],
+    ["DOGE/USD", "dogecoin"],
+  ];
+  for (const [symbol, id] of mapping) {
+    const price = json[id]?.usd;
+    if (typeof price === "number" && isFinite(price) && price > 0) {
+      prices[symbol] = price;
+    }
+  }
+  return prices;
 }
 
 async function refreshPrices(): Promise<Record<string, number>> {
