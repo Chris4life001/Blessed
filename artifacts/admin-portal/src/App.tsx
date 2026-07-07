@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -52,6 +52,12 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   const { data: user, isLoading, isError } = useGetCurrentUser();
   const [, navigate] = useLocation();
 
+  useEffect(() => {
+    if (!isLoading && (isError || !user)) {
+      navigate("/login");
+    }
+  }, [isLoading, isError, user, navigate]);
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -61,7 +67,6 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   }
 
   if (isError || !user) {
-    navigate("/login");
     return null;
   }
 

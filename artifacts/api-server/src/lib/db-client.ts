@@ -23,7 +23,9 @@ let _warned = false;
 
 export function getDb(): DbClient | null {
   if (_db) return _db;
-  const url = process.env.DATABASE_URL;
+  // Strip accidental `psql '...'` or `psql "..."` wrapper users sometimes paste instead of the bare URL
+  const raw = (process.env.DATABASE_URL ?? "").trim();
+  const url = raw.replace(/^psql\s+['"]?/, "").replace(/['"]$/, "") || undefined;
   if (!url) {
     if (!_warned) {
       logger.warn("[db] DATABASE_URL not set — DB persistence disabled");
