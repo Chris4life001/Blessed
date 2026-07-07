@@ -44,6 +44,14 @@ import {
   verifyOtp as verifyOtpFn,
   OTP_TTL_MS,
 } from "../lib/otp";
+import {
+  checkLockout,
+  recordFailure,
+  resetCounter,
+} from "../middlewares/accountLockout";
+import { issueAccessToken, issueRefreshToken, setRefreshCookie } from "./jwt-auth";
+import { env } from "../lib/env";
+import type { UserPayload } from "../types/index";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -123,26 +131,45 @@ router.post("/auth/login", (req, res) => {
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid login" });
   }
-  const userId = usersByEmail.get(parsed.data.email.toLowerCase());
+  const email = parsed.data.email.toLowerCase();
+
+  // ── Account lockout check ──────────────────────────────────────────────────
+  const lockout = checkLockout(email);
+  if (lockout.locked) {
+    const retryAfterSec = Math.ceil(lockout.remainingMs / 1000);
+    res.setHeader("Retry-After", String(retryAfterSec));
+    return res.status(429).json({
+      error: "Account temporarily locked due to repeated failed attempts.",
+      retryAfterSeconds: retryAfterSec,
+    });
+  }
+
+  const userId = usersByEmail.get(email);
   const stored = userId ? users.get(userId) : undefined;
   if (!stored) {
-    return res.status(401).json({
-      error: "Invalid email or password.",
-      code: "invalid_credentials",
-    });
+    const backoffMs = recordFailure(email, { ip: req.ip, path: req.path });
+    logger.warn({ email, ip: req.ip }, "[auth] Login attempt for unknown email");
+    return new Promise<void>((resolve) => setTimeout(() => {
+      res.status(401).json({ error: "Invalid credentials" });
+      resolve();
+    }, backoffMs));
   }
   if (stored.disabled) {
-    return res.status(401).json({
-      error: "Invalid email or password.",
-      code: "invalid_credentials",
-    });
+    return res.status(401).json({ error: "Invalid credentials" });
   }
   if (!verifyPassword(parsed.data.password, stored.passwordHash)) {
-    return res.status(401).json({
-      error: "Invalid email or password.",
-      code: "invalid_credentials",
-    });
+    const backoffMs = recordFailure(email, { ip: req.ip, path: req.path });
+    logger.warn({ userId, email, ip: req.ip }, "[auth] Failed login: wrong password");
+    return new Promise<void>((resolve) => setTimeout(() => {
+      res.status(401).json({ error: "Invalid credentials" });
+      resolve();
+    }, backoffMs));
   }
+
+  // ── Successful auth — reset lockout counter ────────────────────────────────
+  resetCounter(email);
+  logger.info({ userId, email, ip: req.ip }, "[auth] Successful login");
+
   // Admins authenticate directly with their seeded credentials — they do not
   // receive an OTP because their email isn't necessarily a real inbox we
   // control. Regular users still go through the OTP flow.
@@ -167,7 +194,16 @@ router.post("/auth/login", (req, res) => {
       linkUrl: `/users/${stored.user.id}`,
       email: true,
     });
-    return res.json({ ...sessionFor(stored), status: "authenticated" as const });
+    const sessionResp = { ...sessionFor(stored), status: "authenticated" as const };
+    // Issue JWT tokens alongside session cookie if JWT_SECRET is configured
+    if (env.JWT_SECRET) {
+      const payload: UserPayload = { sub: stored.user.id, email: stored.user.email, role: "admin" };
+      const accessToken = issueAccessToken(payload);
+      const refreshToken = issueRefreshToken(stored.user.id);
+      setRefreshCookie(res, refreshToken);
+      return res.json({ ...sessionResp, accessToken });
+    }
+    return res.json(sessionResp);
   }
   issueOtp({ email: stored.user.email, intent: "login", userId: stored.user.id });
   return res.json(otpChallenge(stored.user.email, "login"));

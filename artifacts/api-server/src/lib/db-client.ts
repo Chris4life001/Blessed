@@ -19,7 +19,26 @@ import { logger } from "./logger";
 export type DbClient = ReturnType<typeof drizzle<typeof schema>>;
 
 let _db: DbClient | null = null;
+let _pool: pg.Pool | null = null;
 let _warned = false;
+
+/** Return pg pool statistics for the metrics endpoint. */
+export function getPoolStats(): {
+  totalConnections: number;
+  idleConnections: number;
+  waitingRequests: number;
+  connected: boolean;
+} {
+  if (!_pool) {
+    return { totalConnections: 0, idleConnections: 0, waitingRequests: 0, connected: false };
+  }
+  return {
+    totalConnections: _pool.totalCount,
+    idleConnections: _pool.idleCount,
+    waitingRequests: _pool.waitingCount,
+    connected: true,
+  };
+}
 
 export function getDb(): DbClient | null {
   if (_db) return _db;
@@ -35,6 +54,7 @@ export function getDb(): DbClient | null {
   }
   try {
     const pool = new pg.Pool({ connectionString: url, max: 5 });
+    _pool = pool;
     _db = drizzle(pool, { schema });
     logger.info("[db] PostgreSQL connection pool initialised");
     return _db;

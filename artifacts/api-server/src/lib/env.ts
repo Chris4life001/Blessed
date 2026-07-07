@@ -82,6 +82,10 @@ export const env = {
   // Platform on-chain receiving address override
   PLATFORM_RECEIVING_ADDRESS: get("PLATFORM_RECEIVING_ADDRESS"),
 
+  // Metrics endpoint key — required to access GET /api/metrics
+  // Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+  METRICS_KEY: get("METRICS_KEY"),
+
   // Replit platform — comma-separated list of public hostnames for this deployment
   REPLIT_DOMAINS: get("REPLIT_DOMAINS"),
 
