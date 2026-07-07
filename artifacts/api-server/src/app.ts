@@ -3,6 +3,8 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import { rateLimit } from "express-rate-limit";
+import helmet from "helmet";
+import hpp from "hpp";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { attachSession } from "./lib/session";
@@ -10,6 +12,9 @@ import { platformGate } from "./lib/platform-gate";
 import { env, isProduction } from "./lib/env";
 
 const app: Express = express();
+
+// Remove X-Powered-By to avoid leaking server info
+app.disable("x-powered-by");
 
 // Trust the platform's TLS-terminating reverse proxy in production so that
 // rate-limiting middleware keys on real client IPs rather than the proxy's IP.
@@ -24,6 +29,33 @@ if (isProduction && !env.SESSION_SECRET) {
 }
 const SESSION_SECRET = env.SESSION_SECRET ?? "xpfx-dev-secret-change-me";
 
+// ─── Security headers ────────────────────────────────────────────────────────
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "https:"],
+        connectSrc: ["'self'", "https:"],
+        fontSrc: ["'self'", "https:", "data:"],
+        objectSrc: ["'none'"],
+        mediaSrc: ["'self'"],
+        frameSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        upgradeInsecureRequests: isProduction ? [] : null,
+      },
+    },
+    crossOriginEmbedderPolicy: false, // Allow cross-origin iframes (payment widgets)
+    hsts: isProduction
+      ? { maxAge: 31536000, includeSubDomains: true, preload: true }
+      : false,
+  }),
+);
+
+// ─── Structured logging ──────────────────────────────────────────────────────
 app.use(
   pinoHttp({
     logger,
@@ -37,6 +69,8 @@ app.use(
     },
   }),
 );
+
+// ─── CORS ────────────────────────────────────────────────────────────────────
 // Build an explicit allowlist of frontend origins from the Replit-provided
 // REPLIT_DOMAINS variable (comma-separated hostnames, e.g. "foo.repl.co,bar.repl.co").
 // In development all origins are permitted so local work is unimpeded.
@@ -84,13 +118,33 @@ app.use(
   }),
 );
 
+// ─── Body parsing ────────────────────────────────────────────────────────────
 // cookieParser must run before the CSRF middleware so req.signedCookies is
 // populated when we check for the session cookie below.
 app.use(cookieParser(SESSION_SECRET));
 
-// CSRF defense-in-depth: for cookie-authenticated mutating requests in
-// production, reject any Origin/Referer that is not on the allowlist.
-// This is a secondary layer; the CORS policy above is the primary guard.
+// MoonPay signs the *raw* webhook body. Capture it as a Buffer on the
+// request before the JSON parser turns it into an object, so the
+// /moonpay/webhook handler can HMAC the exact bytes MoonPay signed.
+app.use(
+  "/api/moonpay/webhook",
+  express.raw({ type: "application/json", limit: "1mb" }),
+);
+app.use(
+  "/api/coinbase/webhook",
+  express.raw({ type: "application/json", limit: "1mb" }),
+);
+
+app.use(express.json({ limit: "10kb" }));
+app.use(express.urlencoded({ extended: true, limit: "10kb" }));
+
+// ─── HTTP parameter pollution protection ─────────────────────────────────────
+app.use(hpp());
+
+// ─── CSRF defense-in-depth ───────────────────────────────────────────────────
+// For cookie-authenticated mutating requests in production, reject any
+// Origin/Referer that is not on the allowlist. This is a secondary layer;
+// the CORS policy above is the primary guard.
 app.use((req, res, next) => {
   if (
     isProduction &&
@@ -119,37 +173,35 @@ app.use((req, res, next) => {
   next();
 });
 
-// MoonPay signs the *raw* webhook body. Capture it as a Buffer on the
-// request before the JSON parser turns it into an object, so the
-// /moonpay/webhook handler can HMAC the exact bytes MoonPay signed.
-app.use(
-  "/api/moonpay/webhook",
-  express.raw({ type: "application/json", limit: "1mb" }),
-);
-app.use(
-  "/api/coinbase/webhook",
-  express.raw({ type: "application/json", limit: "1mb" }),
-);
-
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// ─── Session & routing middleware ─────────────────────────────────────────────
 app.use(attachSession);
 app.use(platformGate);
 
-// Rate-limit auth endpoints to resist brute-force and credential stuffing.
-// Counts attempts per IP. Limits are intentionally tight on high-risk paths.
-const authRateLimit = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15-minute window
-  limit: 20,                 // max 20 auth attempts per IP per window
+// ─── Rate limiting ────────────────────────────────────────────────────────────
+// Global rate limit — 100 requests per 15 minutes per IP
+const globalRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 100,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "Too many requests. Please try again later." },
-  skip: () => !isProduction,  // enforce only in production
+  skip: () => !isProduction,
+});
+app.use(globalRateLimit);
+
+// Auth endpoints — tighter limit to resist brute-force / credential stuffing
+const authRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15-minute window
+  limit: 10,                 // max 10 auth attempts per IP per window
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "Too many requests. Please try again later." },
+  skip: () => !isProduction,
 });
 
 const otpRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 10,                 // stricter limit for OTP verification and resend
+  limit: 10,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "Too many requests. Please try again later." },
@@ -161,25 +213,31 @@ app.use("/api/auth/signup", authRateLimit);
 app.use("/api/auth/verify-otp", otpRateLimit);
 app.use("/api/auth/resend-otp", otpRateLimit);
 
-// Rate-limit live-chat to prevent cost and availability abuse of the AI backend.
-// Keyed per authenticated user ID (falls back to IP for unauthenticated requests).
+// Live-chat — keyed per authenticated user to prevent cost/availability abuse
 const liveChatRateLimit = rateLimit({
   windowMs: 60 * 1000,           // 1-minute window
-  limit: 10,                     // max 10 messages per user per minute
+  limit: 20,                     // max 20 messages per user per minute
   standardHeaders: "draft-7",
   legacyHeaders: false,
-  // Key on the authenticated user ID so each user gets their own bucket.
-  // validate.keyGeneratorIpFallback is disabled because we intentionally
-  // fall back to req.ip for unauthenticated requests, not because of an
-  // oversight — express-rate-limit v8 warns about this pattern by default.
   validate: { keyGeneratorIpFallback: false },
   keyGenerator: (req) => (req as typeof req & { userId?: string }).userId ?? req.ip ?? "unknown",
   message: { error: "Too many messages. Please wait before sending another." },
   skip: () => !isProduction,
 });
-
 app.use("/api/live-chat", liveChatRateLimit);
 
+// ─── Routes ───────────────────────────────────────────────────────────────────
 app.use("/api", router);
+
+// ─── Global error handler ─────────────────────────────────────────────────────
+// Must be last — 4-arg signature tells Express this is an error handler.
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  logger.error({ err: err.message, stack: isProduction ? undefined : err.stack }, "Unhandled error");
+  if (isProduction) {
+    res.status(500).json({ error: "Internal Server Error" });
+  } else {
+    res.status(500).json({ error: err.message, stack: err.stack });
+  }
+});
 
 export default app;

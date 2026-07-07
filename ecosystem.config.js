@@ -1,13 +1,18 @@
 module.exports = {
   apps: [
     {
-      name: "nextrade-api",
+      name: "xpresspro-fx",
       script: "artifacts/api-server/dist/index.mjs",
-      instances: 1,
+      instances: "max",
+      exec_mode: "cluster",
       autorestart: true,
       watch: false,
-      max_memory_restart: "512M",
-      env: {
+      max_memory_restart: "500M",
+      error_file: "./logs/err.log",
+      out_file: "./logs/out.log",
+      log_file: "./logs/combined.log",
+      time: true,
+      env_production: {
         NODE_ENV: "production",
         PORT: process.env.PORT || 8080,
       },

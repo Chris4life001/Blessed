@@ -1,0 +1,9 @@
+{
+  "provider": "node",
+  "install": "npm install -g pnpm@9 && pnpm install --frozen-lockfile",
+  "build": "pnpm --filter @workspace/db run push-force; pnpm --filter @workspace/api-server build",
+  "start": "node artifacts/api-server/dist/index.mjs",
+  "env": {
+    "NODE_ENV": "production"
+  }
+}

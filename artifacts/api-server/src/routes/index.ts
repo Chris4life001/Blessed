@@ -35,6 +35,7 @@ import notificationsRouter from "./notifications";
 import adminNotificationsRouter from "./admin-notifications";
 import withdrawalGasFeeRouter from "./withdrawal-gas-fee";
 import adminDepositsRouter from "./admin-deposits";
+import marketRouter from "./market";
 
 const router: IRouter = Router();
 
@@ -71,5 +72,6 @@ router.use(notificationsRouter);
 router.use(adminNotificationsRouter);
 router.use(withdrawalGasFeeRouter);
 router.use(adminDepositsRouter);
+router.use("/market", marketRouter);
 
 export default router;

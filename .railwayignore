@@ -1,0 +1,21 @@
+# Files not needed in Railway build context
+.env
+.env.*
+!.env.example
+*.log
+logs/
+attached_assets/
+__MACOSX/
+*.zip
+*.docx
+*.pdf
+*.jpeg
+*.jpg
+*.png
+Pasted-*.txt
+artifacts/*/dist/
+artifacts/mockup-sandbox/
+node_modules/
+.git/
+.agents/
+.local/
