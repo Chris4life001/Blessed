@@ -1,0 +1,277 @@
+You just imported a project from GitHub. Here is exactly what I want you to do:
+
+GOAL: Get this project fully running on Replit AND make it 100% production-ready
+to deploy live on Railway and a VPS — right now, in this session.
+Not partially. Not "almost". Completely. Every fix must be IMPLEMENTED, not described.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 1 — READ FIRST, THEN ACT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Read every file in the project before changing anything:
+- package.json, tsconfig.json, railway.json, railpack.json
+- src/index.ts, src/app.ts (or equivalent entry points)
+- All route files, middleware, database config, and environment files
+- README.md if it exists
+
+Identify and list every broken, missing, or misconfigured file.
+Then fix ALL of them in the following order.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 2 — FIX package.json
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- Fix any JSON syntax errors
+- Ensure "main" points to correct entry file
+- Set "engines": { "node": ">=18.0.0" }
+- Ensure these scripts exist:
+  "start": "node dist/index.js"
+  "build": "tsc --project tsconfig.json"
+  "dev": "ts-node src/index.ts"
+  "test": "jest --passWithNoTests"
+- Run: npm install
+- Commit a clean, synced package-lock.json
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3 — FIX tsconfig.json
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Ensure these settings are set:
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 4 — FIX railway.json AND railpack.json
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+railway.json:
+{
+  "build": {
+    "builder": "RAILPACK",
+    "buildCommand": "npm ci && npm run build"
+  },
+  "deploy": {
+    "startCommand": "node dist/index.js",
+    "healthcheckPath": "/healthz",
+    "healthcheckTimeout": 30,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3
+  }
+}
+
+railpack.json:
+{
+  "provider": "node",
+  "install": "npm ci",
+  "build": "npm run build",
+  "start": "node dist/index.js",
+  "env": {
+    "NODE_ENV": "production"
+  }
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 5 — BUILD src/config/env.ts
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Create src/config/env.ts that:
+- Reads ALL environment variables at startup
+- In production, throws a fatal error and exits with code 1
+  if any of these are missing:
+  NODE_ENV, DATABASE_URL, SESSION_SECRET, JWT_SECRET, ALLOWED_ORIGINS
+- Exports a typed config object used across the entire app
+- Never hardcodes any secret value
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 6 — BUILD src/index.ts (entry point)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Create or fully replace src/index.ts:
+- Import app from ./app
+- Import config from ./config/env
+- Connect to database FIRST — if DB connection fails, log FATAL and exit code 1
+- Then start HTTP server: app.listen(PORT, '0.0.0.0', ...)
+  PORT from process.env.PORT || 3000
+- Bind to 0.0.0.0 — NOT localhost
+- Log "Server running on port {PORT}" on success
+- Handle uncaughtException and unhandledRejection — log and exit cleanly
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 7 — BUILD src/app.ts (fully secured)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The existing app.ts already has good features. Keep all of them and ADD or VERIFY:
+
+SECURITY (implement each — not just import):
+- helmet() with strict Content Security Policy
+- cors() with ALLOWED_ORIGINS from env only
+- express-rate-limit: 100 req/15min globally
+- Stricter rate limit on /api/auth: 10 req/15min
+- Stricter rate limit on /api/live-chat: 20 req/15min
+- hpp() — HTTP parameter pollution protection
+- express-mongo-sanitize() or equivalent
+- CSRF protection on all non-GET state-changing routes
+- express.json({ limit: '10kb' })
+- express.urlencoded({ extended: true, limit: '10kb' })
+- Remove X-Powered-By header
+
+SESSION & AUTH:
+- express-session: secure: true, httpOnly: true, sameSite: 'strict'
+- SESSION_SECRET from env only
+- JWT verification middleware on all protected routes
+- JWT_SECRET from env only
+
+HEALTH ENDPOINTS (must return HTTP 200):
+- GET /healthz → { status: "ok", db: "connected", uptime: process.uptime(), timestamp: Date.now() }
+- GET /api/healthz → same response
+
+LOGGING:
+- pino-http structured JSON logging on every request
+- Log: method, path, status code, response time
+
+ERROR HANDLING (last middleware):
+- Production: return { error: "Internal Server Error" } — NO stack traces
+- Development: return full error details
+- Never expose internal system info in production responses
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 8 — DATABASE (if applicable)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- Implement connection pooling
+- Connect before server starts
+- On disconnect: auto-reconnect with exponential backoff (max 5 retries)
+- Reflect DB status in /healthz response
+- If DB is down, /healthz returns HTTP 503
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 9 — VPS PRODUCTION FILES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Create ecosystem.config.js (PM2):
+module.exports = {
+  apps: [{
+    name: 'xpresspro-fx',
+    script: 'dist/index.js',
+    instances: 'max',
+    exec_mode: 'cluster',
+    env_production: {
+      NODE_ENV: 'production',
+      PORT: 3000
+    },
+    error_file: './logs/err.log',
+    out_file: './logs/out.log',
+    log_file: './logs/combined.log',
+    time: true,
+    max_memory_restart: '500M',
+    watch: false
+  }]
+};
+
+Create nginx.conf:
+- Reverse proxy to localhost:3000
+- Enable gzip compression
+- Security headers: X-Frame-Options, X-XSS-Protection,
+  X-Content-Type-Options, Referrer-Policy, Permissions-Policy
+- Rate limiting at Nginx level
+- SSL/HTTPS ready (certbot compatible)
+- Serve static files directly without hitting Node
+- WebSocket proxy support
+
+Create deploy.sh:
+#!/bin/bash
+set -e
+echo "Pulling latest code..."
+git pull origin main
+echo "Installing dependencies..."
+npm ci --only=production
+echo "Building..."
+npm run build
+echo "Restarting PM2..."
+pm2 reload ecosystem.config.js --env production
+pm2 save
+echo "Deployment complete."
+
+Make deploy.sh executable: chmod +x deploy.sh
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 10 — ENVIRONMENT DOCUMENTATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Create .env.example with ALL required variables:
+NODE_ENV=production
+PORT=3000
+DATABASE_URL=your_database_url_here
+SESSION_SECRET=your_minimum_32_char_secret_here
+JWT_SECRET=your_minimum_32_char_jwt_secret_here
+ALLOWED_ORIGINS=https://yourdomain.com
+REDIS_URL=your_redis_url_here (if applicable)
+
+Ensure .env is in both .gitignore and .railwayignore
+Ensure dist/ and node_modules/ are in .gitignore
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 11 — BUILD VERIFICATION (fix until all pass)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Run each command and fix every error until all succeed:
+
+1. npm ci                 ← zero errors
+2. npm run build          ← zero TypeScript errors
+3. npm test               ← passes or exits cleanly
+4. node dist/index.js     ← server starts without crashing
+5. curl http://localhost:3000/healthz ← returns HTTP 200 JSON
+
+Do NOT proceed to next step until all 5 pass.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 12 — FINAL CHECKLIST (verify every item)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[ ] npm ci completes with zero errors
+[ ] npm run build compiles with zero TypeScript errors
+[ ] npm test passes or exits cleanly
+[ ] node dist/index.js starts without crashing
+[ ] Server binds to 0.0.0.0 not localhost
+[ ] GET /healthz returns HTTP 200 JSON
+[ ] GET /api/healthz returns HTTP 200 JSON
+[ ] All security middleware active (helmet, cors, rate-limit, hpp)
+[ ] No secrets hardcoded anywhere in codebase
+[ ] .env is NOT committed to repo
+[ ] package-lock.json is committed and synced
+[ ] railway.json and railpack.json correctly configured
+[ ] ecosystem.config.js exists and is correct
+[ ] nginx.conf exists and is correct
+[ ] deploy.sh exists and is executable
+[ ] .env.example documents all required variables
+[ ] Global error handler hides stack traces in production
+[ ] Database connects before server starts
+[ ] DB health reflected in /healthz response
+[ ] All routes are protected where authentication is required
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REQUIRED FINAL OUTPUT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+When every step is complete, give me:
+1. Full list of every file created or modified
+2. Confirmation all 5 build verification commands passed
+3. Complete list of environment variables to set in Railway dashboard
+4. Complete list of environment variables to set on VPS
+5. Any manual steps remaining that only I can do (e.g. DNS, SSL cert)
+
+This project must be deployable to Railway AND a VPS immediately
+after this session with zero additional fixes required.
